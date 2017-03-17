@@ -14,21 +14,32 @@ import re
 from behave import given, when, then
 
 
-@given('we have pgcli installed')
+@given('we have mycli installed')
 def step_install_cli(_):
     """
-    Check that pgcli is in installed modules.
+    Check that mycli is in installed modules.
     """
-    dists = set([di.key for di in pip.get_installed_distributions()])
-    assert 'pgcli' in dists
 
-
-@when('we run pgcli')
+@when('we run mycli')
 def step_run_cli(context):
     """
     Run the process using pexpect.
     """
-    context.cli = pexpect.spawnu('pgcli')
+    run_args = []
+    if context.conf.get('host', None):
+        run_args.extend(('-h', context.conf['host']))
+    if context.conf.get('user', None):
+        run_args.extend(('-u', context.conf['user']))
+    if context.conf.get('pass', None):
+        run_args.extend(('-p', context.conf['pass']))
+    if context.conf.get('dbname', None):
+        run_args.extend(('-D', context.conf['dbname']))
+    cli_cmd = context.conf.get('cli_command', None) or sys.executable+' -c "import coverage ; coverage.process_startup(); import mycli.main; mycli.main.cli()"'
+
+    cmd_parts = [cli_cmd] + run_args
+    cmd = ' '.join(cmd_parts)
+    print(cmd)
+    context.cli = pexpect.spawnu(cmd, cwd='..')
     context.exit_sent = False
 
 
@@ -37,7 +48,10 @@ def step_wait_prompt(context):
     """
     Make sure prompt is displayed.
     """
-    _expect_exact(context, '{0}> '.format(context.conf['dbname']), timeout=5)
+    dbname = context.conf['dbname']
+    if not dbname:
+        dbname = '(none)'
+    _expect_exact(context, '{0}> '.format(dbname), timeout=5)
 
 
 @when('we send "ctrl + d"')
@@ -54,28 +68,28 @@ def step_send_help(context):
     """
     Send \? to see help.
     """
-    context.cli.sendline('\?')
+    context.cli.sendline('\\?')
 
 @when('we save a named query')
 def step_save_named_query(context):
     """
     Send \ns command
     """
-    context.cli.sendline('\\ns foo SELECT 12345')
+    context.cli.sendline('\\fs foo SELECT 12345')
 
 @when('we use a named query')
 def step_use_named_query(context):
     """
     Send \n command
     """
-    context.cli.sendline('\\n foo')
+    context.cli.sendline('\\f foo')
 
 @when('we delete a named query')
 def step_delete_named_query(context):
     """
     Send \nd command
     """
-    context.cli.sendline('\\nd foo')
+    context.cli.sendline('\\fd foo')
 
 @when('we create database')
 def step_db_create(context):
@@ -97,6 +111,9 @@ def step_db_drop(context):
     """
     context.cli.sendline('drop database {0};'.format(
         context.conf['dbname_tmp']))
+
+    _expect_exact(context, 'Do you want to proceed? (y/n):', timeout=2)
+    context.cli.sendline('y')
 
 
 @when('we create table')
@@ -137,6 +154,8 @@ def step_delete_from_table(context):
     Send deete from table.
     """
     context.cli.sendline('''delete from a where x = 'yyy';''')
+    _expect_exact(context, 'Do you want to proceed? (y/n):', timeout=2)
+    context.cli.sendline('y')
 
 
 @when('we drop table')
@@ -145,7 +164,8 @@ def step_drop_table(context):
     Send drop table.
     """
     context.cli.sendline('drop table a;')
-
+    _expect_exact(context, 'Do you want to proceed? (y/n):', timeout=2)
+    context.cli.sendline('y')
 
 @when('we connect to test database')
 def step_db_connect_test(context):
@@ -153,7 +173,7 @@ def step_db_connect_test(context):
     Send connect to database.
     """
     db_name = context.conf['dbname']
-    context.cli.sendline('\\connect {0}'.format(db_name))
+    context.cli.sendline('use {0}'.format(db_name))
 
 
 @when('we start external editor providing a file name')
@@ -192,12 +212,12 @@ def step_edit_done_sql(context):
         os.remove(context.editor_file_name)
 
 
-@when('we connect to postgres')
-def step_db_connect_postgres(context):
+@when('we connect to mysql')
+def step_db_connect_mysql(context):
     """
     Send connect to database.
     """
-    context.cli.sendline('\\connect postgres')
+    context.cli.sendline('use mysql')
 
 
 @when('we refresh completions')
@@ -205,10 +225,10 @@ def step_refresh_completions(context):
     """
     Send refresh command.
     """
-    context.cli.sendline('\\refresh')
+    context.cli.sendline('rehash')
 
 
-@then('pgcli exits')
+@then('mycli exits')
 def step_wait_exit(context):
     """
     Make sure the cli exits.
@@ -216,12 +236,15 @@ def step_wait_exit(context):
     _expect_exact(context, pexpect.EOF, timeout=5)
 
 
-@then('we see pgcli prompt')
+@then('we see mycli prompt')
 def step_see_prompt(context):
     """
     Wait to see the prompt.
     """
-    _expect_exact(context, '{0}> '.format(context.conf['dbname']), timeout=5)
+    dbname = context.conf['dbname']
+    if not dbname:
+        dbname = '(none)'
+    _expect_exact(context, '{0}> '.format(dbname), timeout=5)
 
 
 @then('we see help output')
@@ -235,15 +258,14 @@ def step_see_db_created(context):
     """
     Wait to see create database output.
     """
-    _expect_exact(context, 'CREATE DATABASE', timeout=2)
-
+    _expect_exact(context, 'OK, 1 row affected', timeout=2)
 
 @then('we see database dropped')
 def step_see_db_dropped(context):
     """
     Wait to see drop database output.
     """
-    _expect_exact(context, 'DROP DATABASE', timeout=2)
+    _expect_exact(context, 'Query OK, 0 rows affected', timeout=2)
 
 
 @then('we see database connected')
@@ -251,15 +273,14 @@ def step_see_db_connected(context):
     """
     Wait to see drop database output.
     """
-    _expect_exact(context, 'You are now connected to database', timeout=2)
-
+    _expect_exact(context, 'are now connected to database', timeout=2)
 
 @then('we see table created')
 def step_see_table_created(context):
     """
     Wait to see create table output.
     """
-    _expect_exact(context, 'CREATE TABLE', timeout=2)
+    _expect_exact(context, 'Query OK, 0 rows affected', timeout=2)
 
 
 @then('we see record inserted')
@@ -267,15 +288,14 @@ def step_see_record_inserted(context):
     """
     Wait to see insert output.
     """
-    _expect_exact(context, 'INSERT 0 1', timeout=2)
-
+    _expect_exact(context, 'OK, 1 row affected', timeout=2)
 
 @then('we see record updated')
 def step_see_record_updated(context):
     """
     Wait to see update output.
     """
-    _expect_exact(context, 'UPDATE 1', timeout=2)
+    _expect_exact(context, 'OK, 1 row affected', timeout=2)
 
 
 @then('we see data selected')
@@ -284,7 +304,7 @@ def step_see_data_selected(context):
     Wait to see select output.
     """
     _expect_exact(context, 'yyy', timeout=1)
-    _expect_exact(context, 'SELECT 1', timeout=1)
+    _expect_exact(context, '1 row in set', timeout=1)
 
 
 @then('we see record deleted')
@@ -292,7 +312,7 @@ def step_see_data_deleted(context):
     """
     Wait to see delete output.
     """
-    _expect_exact(context, 'DELETE 1', timeout=2)
+    _expect_exact(context, 'OK, 1 row affected', timeout=2)
 
 
 @then('we see table dropped')
@@ -300,7 +320,7 @@ def step_see_table_dropped(context):
     """
     Wait to see drop output.
     """
-    _expect_exact(context, 'DROP TABLE', timeout=2)
+    _expect_exact(context, 'OK, 0 rows affected', timeout=2)
 
 
 @then('we see the named query saved')
@@ -342,6 +362,6 @@ def _expect_exact(context, expected, timeout):
     except:
         # Strip color codes out of the output.
         actual = re.sub(r'\x1b\[([0-9A-Za-z;?])+[m|K]?', '', context.cli.before)
-        raise Exception('Expected:\n---\n{0}\n---\n\nActual:\n---\n{1}\n---'.format(
+        raise Exception('Expected:\n---\n{0!r}\n---\n\nActual:\n---\n{1!r}\n---'.format(
             expected,
             actual))
